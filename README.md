@@ -52,3 +52,27 @@ Parar o container:
 docker compose down
 ```
 
+**Imagem pública (Docker Hub)** 🏷️
+
+Você também pode usar a imagem publicada em Docker Hub (tag `latest`):
+
+- Pull:
+
+```bash
+docker pull biod1/botcomlinux:latest
+```
+
+- Rodar diretamente (usa o arquivo `.env` no diretório atual):
+
+```bash
+docker run -d --env-file .env --name botcomlinux biod1/botcomlinux:latest
+```
+
+- Exemplo de comando para logs:
+
+```bash
+docker logs -f botcomlinux
+```
+
+Imagem digest: `sha256:8bb260a348a48d3cbdee30c40097306bde6489d63d9e7864aaf61603f3d6191e`
+
