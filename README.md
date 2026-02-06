@@ -29,3 +29,26 @@ Um bot simples para Discord focado em tickets e respostas rápidas, com um coman
 - Evite commitar o `.env` (contém o token). Adicione `.env` ao `.gitignore` se necessário.
 
 Se quiser, eu comito este README no repositório por você.
+
+**Rodando com Docker** 🐳
+
+- Build da imagem:
+
+```bash
+docker build -t botcomlinux:latest .
+```
+
+- Ou com docker-compose:
+
+```bash
+docker compose up --build -d
+```
+
+- O container lê variáveis de ambiente do arquivo `.env` (não commite esse arquivo!).
+
+Parar o container:
+
+```bash
+docker compose down
+```
+
