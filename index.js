@@ -14,63 +14,12 @@ const {
 
 require("dotenv").config();
 
-// 🧩 Adiciona o FFmpeg manualmente
-const ffmpeg = require("ffmpeg-static");
-process.env.FFMPEG_PATH = ffmpeg;
-
-const { Player } = require("discord-player");
-const { DefaultExtractors } = require("@discord-player/extractor");
-const playdl = require("play-dl");
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
   ],
-});
-
-// 🪩 Sistema de música
-const player = new Player(client, {
-  ytdlOptions: {
-    quality: "highestaudio",
-    highWaterMark: 1 << 25,
-  },
-});
-
-// ✅ Atualização obrigatória (v7)
-(async () => {
-  try {
-    await player.extractors.loadMulti(DefaultExtractors);
-    console.log("🎧 Extractors carregados com sucesso!");
-  } catch (error) {
-    console.error("❌ Erro ao carregar extractors:", error);
-  }
-})();
-
-// Eventos do player
-player.events.on("playerStart", (queue, track) => {
-  queue.metadata.send(`🎵 Tocando agora: **${track.title}**`);
-});
-player.events.on("error", (queue, error) => {
-  console.error("❌ Erro no player:", error);
-  if (queue?.metadata) {
-    queue.metadata.send(
-      "⚠️ Ocorreu um erro ao tocar a música. Tente novamente!",
-    );
-  }
-});
-player.events.on("playerError", (queue, error) => {
-  console.error("🎧 Erro de reprodução:", error);
-});
-player.events.on("playerSkip", (queue, track) => {
-  queue.metadata.send(`⏭️ Pulando: **${track.title}**`);
-});
-player.events.on("disconnect", (queue) => {
-  queue.metadata.send("👋 Saí do canal de voz!");
-});
-player.events.on("emptyChannel", (queue) => {
-  queue.metadata.send("🔇 Canal de voz vazio, saindo...");
 });
 
 // 🎫 Sistema de Tickets
@@ -97,7 +46,7 @@ client.once(Events.ClientReady, () => {
 const commands = [
   new SlashCommandBuilder()
     .setName("ping")
-    .setDescription("Replies with Pong!"),
+    .setDescription("Pong!"),
   new SlashCommandBuilder()
     .setName("devops")
     .setDescription("Fala algo sobre DevOps"),
@@ -116,26 +65,18 @@ const commands = [
   new SlashCommandBuilder()
     .setName("setup-ticket")
     .setDescription("Envia botão de criação de ticket (admin)"),
-
-  // 🎵 Comandos de música
   new SlashCommandBuilder()
-    .setName("play")
-    .setDescription("Toca uma música do YouTube, Spotify, etc.")
-    .addStringOption((option) =>
+    .setName("clear")
+    .setDescription("Remove mensagens recentes do canal")
+    .addIntegerOption((option) =>
       option
-        .setName("query")
-        .setDescription("Nome ou link da música")
-        .setRequired(true),
+        .setName("amount")
+        .setDescription("Número de mensagens a apagar (1-100)")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(100),
     ),
-  new SlashCommandBuilder()
-    .setName("skip")
-    .setDescription("Pula a música atual"),
-  new SlashCommandBuilder()
-    .setName("stop")
-    .setDescription("Para a reprodução e limpa a fila"),
-  new SlashCommandBuilder()
-    .setName("queue")
-    .setDescription("Mostra a fila atual"),
+  // (comandos de música removidos)
 ].map((cmd) => cmd.toJSON());
 
 // Função para criar o canal de ticket
@@ -292,129 +233,45 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
         break;
 
-      // 🎵 MÚSICA
-      case "play": {
-        const query = interaction.options.getString("query");
-        const voiceChannel = interaction.member.voice.channel;
-
-        if (!voiceChannel)
-          return interaction.reply({
-            content: "🎧 Você precisa estar em um canal de voz!",
-            ephemeral: true,
+      // comando: clear
+      case "clear": {
+        const amount = interaction.options.getInteger("amount");
+        if (
+          !interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)
+        ) {
+          return await interaction.reply({
+            content:
+              "❌ Você precisa da permissão `ManageMessages` para usar este comando.",
+            flags: 1 << 6,
           });
+        }
 
-        // Defer a interação para evitar erro 10062
-        await interaction.deferReply();
+        const botMember = interaction.guild?.members?.me;
+        if (
+          !botMember ||
+          !interaction.channel.permissionsFor(botMember).has(
+            PermissionsBitField.Flags.ManageMessages,
+          )
+        ) {
+          return await interaction.reply({
+            content:
+              "❌ Eu não tenho permissão para gerenciar mensagens neste canal.",
+            flags: 1 << 6,
+          });
+        }
 
-        // Buscar música
-        let result;
+        await interaction.deferReply({ ephemeral: true });
         try {
-          result = await player.search(query, {
-            requestedBy: interaction.user,
-          });
+          const deleted = await interaction.channel.bulkDelete(amount, true);
+          const count = deleted ? deleted.size : 0;
+          await interaction.editReply({ content: `🧹 Apaguei ${count} mensagens.` });
         } catch (err) {
-          console.error("❌ Erro ao buscar música:", err);
-          return interaction.editReply(
-            "⚠️ Ocorreu um erro ao buscar a música.",
-          );
-        }
-
-        if (!result || !result.tracks.length)
-          return interaction.editReply("❌ Nenhum resultado encontrado.");
-
-        // Criar fila
-        const queue = await player.nodes.create(interaction.guild, {
-          metadata: interaction.channel,
-        });
-
-        // Conectar ao canal de voz
-        if (!queue.connection) {
-          try {
-            await queue.connect(voiceChannel);
-          } catch (err) {
-            console.error("❌ Erro ao conectar ao canal de voz:", err);
-            return interaction.editReply(
-              "⚠️ Não foi possível conectar ao canal de voz.",
-            );
-          }
-        }
-
-        // Adicionar música à fila
-        try {
-          result.playlist
-            ? queue.addTrack(result.tracks)
-            : queue.addTrack(result.tracks[0]);
-        } catch (err) {
-          console.error("❌ Erro ao adicionar música à fila:", err);
-          return interaction.editReply(
-            "⚠️ Não foi possível adicionar a música à fila.",
-          );
-        }
-
-        // Tocar música com tratamento de abort
-        try {
-          if (!queue.node.isPlaying()) await queue.node.play();
-        } catch (err) {
-          console.error("❌ Erro ao iniciar a música:", err);
-          return interaction.editReply(
-            "⚠️ Não foi possível tocar a música. Talvez o link seja inválido ou a conexão falhou.",
-          );
-        }
-
-        // Mensagem final
-        await interaction.editReply(
-          `🎶 Tocando agora: **${result.tracks[0].title}**`,
-        );
-
-        break;
-      }
-
-      case "skip": {
-        await interaction.deferReply();
-
-        const queue = player.nodes.get(interaction.guildId);
-        if (!queue || !queue.node.isPlaying())
-          return interaction.editReply({
-            content: "🚫 Nenhuma música tocando.",
-            ephemeral: true,
+          console.error("❌ Erro ao apagar mensagens:", err);
+          await interaction.editReply({
+            content:
+              "❌ Erro ao apagar mensagens. Mensagens com mais de 14 dias não podem ser apagadas em massa, ou ocorreu um erro de API.",
           });
-
-        await queue.node.skip();
-        await interaction.editReply("⏭️ Música pulada!");
-        break;
-      }
-
-      case "stop": {
-        await interaction.deferReply();
-
-        const queue = player.nodes.get(interaction.guildId);
-        if (!queue || !queue.node.isPlaying())
-          return interaction.editReply({
-            content: "🚫 Nenhuma música tocando.",
-            ephemeral: true,
-          });
-
-        queue.delete();
-        await interaction.editReply("🛑 Música parada e fila limpa!");
-        break;
-      }
-
-      case "queue": {
-        await interaction.deferReply();
-
-        const queue = player.nodes.get(interaction.guildId);
-        if (!queue || !queue.tracks.toArray().length)
-          return interaction.editReply({
-            content: "📭 Fila vazia.",
-            ephemeral: true,
-          });
-
-        const tracks = queue.tracks
-          .toArray()
-          .map((t, i) => `${i + 1}. ${t.title}`)
-          .join("\n");
-
-        await interaction.editReply(`🎶 **Fila atual:**\n${tracks}`);
+        }
         break;
       }
 
@@ -442,6 +299,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 });
+
 
 // 🔐 Login
 client.login(process.env.TOKEN);
