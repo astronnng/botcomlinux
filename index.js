@@ -60,6 +60,9 @@ const commands = [
     .setName("delfito")
     .setDescription("Fala algo sobre o grande Delfito"),
   new SlashCommandBuilder()
+    .setName("no")
+    .setDescription("Retorna um no aleatório"),
+  new SlashCommandBuilder()
     .setName("ticket")
     .setDescription("Abre um ticket de suporte"),
   new SlashCommandBuilder()
@@ -141,6 +144,86 @@ async function criarTicket(interaction, user, guild) {
   return channel;
 }
 
+// Tradução com fallbacks: LibreTranslate -> MyMemory -> Google translate endpoint
+async function translateToPt(text) {
+  // helper to check JSON content-type
+  const isJson = (res) => {
+    const ct = res.headers && (res.headers.get ? res.headers.get("content-type") : res.headers["content-type"]);
+    return ct && ct.toLowerCase().includes("application/json");
+  };
+
+  // 1) LibreTranslate
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch("https://libretranslate.de/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "botcomlinux/1.0" },
+      body: JSON.stringify({ q: text, source: "en", target: "pt", format: "text" }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`LibreTranslate HTTP ${res.status}`);
+    // read as text first to avoid uncaught JSON parse errors; then try parse
+    const raw = await res.text();
+    try {
+      const j = JSON.parse(raw);
+      if (j && j.translatedText) return j.translatedText;
+    } catch (pe) {
+      throw new Error("LibreTranslate returned invalid JSON");
+    }
+  } catch (e) {
+    console.warn("translateToPt: LibreTranslate failed:", e.message || e);
+  }
+
+  // 2) MyMemory
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|pt-BR`;
+    const res = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json", "User-Agent": "botcomlinux/1.0" } });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`MyMemory HTTP ${res.status}`);
+    const raw = await res.text();
+    try {
+      const j = JSON.parse(raw);
+      if (j && j.responseData && j.responseData.translatedText) return j.responseData.translatedText;
+    } catch (pe) {
+      throw new Error("MyMemory returned invalid JSON");
+    }
+  } catch (e) {
+    console.warn("translateToPt: MyMemory failed:", e.message || e);
+  }
+
+  // 3) Google Translate public endpoint
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=pt&dt=t&q=${encodeURIComponent(text)}`;
+    const res = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json", "User-Agent": "botcomlinux/1.0" } });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`Google HTTP ${res.status}`);
+    // parse as text and try JSON.parse to avoid undici parse exceptions
+    const raw = await res.text();
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && Array.isArray(arr[0])) {
+        let out = "";
+        for (const seg of arr[0]) {
+          if (Array.isArray(seg) && seg[0]) out += seg[0];
+        }
+        if (out) return out;
+      }
+    } catch (pe) {
+      throw new Error("Google returned invalid JSON");
+    }
+  } catch (e) {
+    console.warn("translateToPt: Google fallback failed:", e.message || e);
+  }
+
+  return null;
+}
+
 // 💬 Tratamento de Interações
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isChatInputCommand()) {
@@ -199,6 +282,49 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply(
           respostas[Math.floor(Math.random() * respostas.length)],
         );
+        break;
+      }
+
+      case "no": {
+        await interaction.deferReply();
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 10000);
+          const res = await fetch("https://naas.isalman.dev/no", { signal: controller.signal });
+          clearTimeout(timeout);
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          const raw = await res.text();
+          let data;
+          try {
+            data = JSON.parse(raw);
+          } catch (pe) {
+            throw new Error("Invalid JSON from source");
+          }
+          const english = data && data.reason ? data.reason : null;
+          if (!english) {
+            await interaction.editReply("❌ Não foi possível obter uma razão.");
+            break;
+          }
+
+          // Tentar traduzir para PT-BR usando fallbacks
+          try {
+            const translated = await translateToPt(english);
+            if (translated) {
+              await interaction.editReply(translated);
+            } else {
+              await interaction.editReply(english);
+            }
+          } catch (tErr) {
+            console.error("❌ Erro ao traduzir /no:", tErr);
+            await interaction.editReply(english);
+          }
+        } catch (err) {
+          console.error("❌ Erro ao obter /no:", err);
+          const msg = err.name === "AbortError" ? "Tempo de resposta esgotado." : "Erro ao obter resposta.";
+          await interaction.editReply(`❌ Não foi possível obter um 'no' agora. ${msg}`);
+        }
         break;
       }
 

@@ -5,7 +5,8 @@ WORKDIR /usr/src/app
 
 # Install dependencies
 COPY package*.json ./
-RUN npm ci --only=production
+# Use npm install with --omit=dev to install production deps when no lockfile present
+RUN npm install --omit=dev
 
 # Copy source
 COPY . .
