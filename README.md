@@ -34,6 +34,37 @@ Um bot simples para Discord focado em tickets e respostas rápidas, com um coman
 - **Tradução para Pt-BR:** o bot tenta traduzir automaticamente a razão para Português-Brasil usando uma cadeia de provedores (LibreTranslate → MyMemory → Google Translate). Se todas as tentativas de tradução falharem, o texto em inglês é retornado.
 - **Limitações e privacidade:** a chamada usa serviços externos (API do `no-as-a-service` e provedores de tradução). A API pública pode impor rate-limits (por exemplo, ~120 req/min por IP). Não use o comando para dados sensíveis; para produção considere vendorizar `reasons.json` localmente ou hospedar o serviço em container próprio.
 
+**Exemplos de uso**
+
+- Teste rápido com `curl` (retorna JSON do serviço original):
+
+```bash
+curl -s https://naas.isalman.dev/no
+# => { "reason": "Some English reason." }
+```
+
+- Teste em Node (Node 18+ com `fetch` global):
+
+```js
+const res = await fetch('https://naas.isalman.dev/no');
+const { reason } = await res.json();
+console.log(reason);
+```
+
+- Exemplo simples de handler (já integrado ao `index.js`, apenas para referência):
+
+```js
+// dentro do seu listener de interações (discord.js v14)
+if (interaction.isChatInputCommand() && interaction.commandName === 'no') {
+	await interaction.deferReply();
+	const r = await fetch('https://naas.isalman.dev/no');
+	const data = await r.json();
+	await interaction.editReply(data.reason); // o bot já tenta traduzir para pt-BR automaticamente
+}
+```
+
+Observação: o bot atualmente tenta traduzir o texto retornado; se a tradução não estiver disponível por falha externa, ele retornará o texto em inglês.
+
 **Docker / docker-compose**
 - Atenção: se você usa `docker compose` com bind-mount do diretório do projeto, o mount pode sobrescrever `node_modules` presentes na imagem. Em ambiente de desenvolvimento, ou remova o bind-mount, ou adicione um volume anônimo para `/usr/src/app/node_modules`, ou instale dependências no host antes de rodar o container.
 
